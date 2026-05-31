@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lexical Analyzer — Full Pipeline</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a0c10;
+  --surface: #111318;
+  --surface2: #181b22;
+  --surface3: #1e222c;
+  --border: rgba(255,255,255,0.07);
+  --border2: rgba(255,255,255,0.12);
+  --accent: #4f8cff;
+  --accent2: #7c5cfc;
+  --green: #22d3a0;
+  --amber: #f5a623;
+  --red: #ff5f5f;
+  --pink: #e06bff;
+  --text: #e8ecf4;
+  --muted: #6b7280;
+  --muted2: #4b5563;
+  --mono: 'JetBrains Mono', monospace;
+  --sans: 'Space Grotesk', sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+
+/* grid noise bg */
+body::before{content:'';position:fixed;inset:0;background-image:radial-gradient(circle at 20% 20%, rgba(79,140,255,0.06) 0%, transparent 50%),radial-gradient(circle at 80% 80%, rgba(124,92,252,0.06) 0%, transparent 50%);pointer-events:none;z-index:0}
+
+.app{position:relative;z-index:1;display:grid;grid-template-rows:auto 1fr;min-height:100vh}
+
+/* HEADER */
+header{padding:20px 28px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:16px;backdrop-filter:blur(10px);background:rgba(10,12,16,0.8);position:sticky;top:0;z-index:100}
+.logo{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:flex;align-items:center;justify-content:center;font-size:18px}
+.header-text h1{font-size:18px;font-weight:700;letter-spacing:-0.3px}
+.header-text p{font-size:12px;color:var(--muted);margin-top:1px}
+.badge{margin-left:auto;background:rgba(79,140,255,0.12);border:1px solid rgba(79,140,255,0.25);color:var(--accent);font-size:11px;padding:4px 10px;border-radius:20px;font-family:var(--mono)}
+
+/* LAYOUT */
+.workspace{display:grid;grid-template-columns:420px 1fr;height:calc(100vh - 65px)}
+
+/* LEFT PANEL */
+.left-panel{border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.panel-head{padding:16px 20px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.panel-head h2{font-size:13px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:1px}
+.controls-row{padding:14px 20px;display:flex;gap:10px;border-bottom:1px solid var(--border)}
+select{flex:1;background:var(--surface2);border:1px solid var(--border2);color:var(--text);font-family:var(--sans);font-size:13px;padding:8px 12px;border-radius:8px;outline:none;cursor:pointer}
+select:focus{border-color:var(--accent)}
+.btn-analyze{background:linear-gradient(135deg,var(--accent),var(--accent2));border:none;color:#fff;font-family:var(--sans);font-size:13px;font-weight:600;padding:8px 18px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:6px;white-space:nowrap;transition:opacity .15s,transform .1s}
+.btn-analyze:hover{opacity:.9}
+.btn-analyze:active{transform:scale(.97)}
+.editor-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden;padding:0 20px 20px}
+.editor-label{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;padding:12px 0 8px}
+textarea{flex:1;resize:none;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;color:#c9d1e0;font-family:var(--mono);font-size:13px;line-height:1.7;outline:none;transition:border-color .2s}
+textarea:focus{border-color:var(--accent)}
+
+/* RIGHT PANEL — tabbed */
+.right-panel{display:flex;flex-direction:column;overflow:hidden}
+.tab-bar{display:flex;border-bottom:1px solid var(--border);background:var(--surface);overflow-x:auto;scrollbar-width:none}
+.tab-bar::-webkit-scrollbar{display:none}
+.tab{padding:0 20px;height:48px;display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap;transition:color .15s,border-color .15s;user-select:none}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tab-dot{width:7px;height:7px;border-radius:50%;background:currentColor;opacity:.5}
+.tab.active .tab-dot{opacity:1}
+
+.tab-content{flex:1;overflow:hidden;position:relative}
+.tab-pane{position:absolute;inset:0;overflow-y:auto;padding:20px;display:none}
+.tab-pane.active{display:block}
+.tab-pane::-webkit-scrollbar{width:6px}
+.tab-pane::-webkit-scrollbar-track{background:transparent}
+.tab-pane::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+
+/* TOKEN TABLE */
+.token-table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12.5px}
+.token-table th{background:var(--surface2);color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.8px;padding:10px 14px;text-align:left;position:sticky;top:0;z-index:5;border-bottom:1px solid var(--border)}
+.token-table td{padding:9px 14px;border-bottom:1px solid var(--border);vertical-align:middle}
+.token-table tbody tr:hover td{background:rgba(255,255,255,0.02)}
+.token-type{display:inline-block;padding:2px 8px;border-radius:5px;font-size:11px;font-weight:600;letter-spacing:.3px}
+.tt-KEYWORD{background:rgba(124,92,252,.18);color:#a78bfa}
+.tt-IDENTIFIER{background:rgba(79,140,255,.15);color:#60a5fa}
+.tt-NUMBER{background:rgba(34,211,160,.15);color:#34d399}
+.tt-STRING{background:rgba(245,166,35,.15);color:#fbbf24}
+.tt-OPERATOR{background:rgba(255,95,95,.15);color:#f87171}
+.tt-FUNCTION{background:rgba(230,107,255,.15);color:#e879f9}
+.tt-COMMENT_SINGLE,.tt-COMMENT_MULTI{background:rgba(107,114,128,.15);color:#9ca3af}
+.tt-UNKNOWN{background:rgba(255,255,255,.08);color:var(--muted)}
+.empty-state{text-align:center;color:var(--muted);padding:48px 0;font-size:14px}
+
+/* SUMMARY */
+.summary-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:20px}
+.summary-card{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px}
+.sc-label{font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px}
+.sc-value{font-size:22px;font-weight:700;font-family:var(--mono)}
+.bar-row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.bar-label{width:110px;font-size:12px;font-family:var(--mono);color:var(--text);flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar-track{flex:1;height:6px;background:var(--surface3);border-radius:3px;overflow:hidden}
+.bar-fill{height:100%;border-radius:3px;transition:width .4s cubic-bezier(.4,0,.2,1)}
+.bar-count{font-size:11px;font-family:var(--mono);color:var(--muted);width:28px;text-align:right;flex-shrink:0}
+
+/* PIPELINE TABS: Regex, NFA, DFA, Transition */
+.section-title{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.section-title::after{content:'';flex:1;height:1px;background:var(--border)}
+
+/* Regex panel */
+.regex-list{display:flex;flex-direction:column;gap:8px}
+.regex-item{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:6px}
+.ri-header{display:flex;align-items:center;gap:10px}
+.ri-name{font-size:12px;font-weight:600;font-family:var(--mono)}
+.ri-regex{font-size:12px;font-family:var(--mono);color:var(--amber);word-break:break-all;background:rgba(245,166,35,.07);padding:6px 10px;border-radius:6px;border-left:2px solid var(--amber)}
+.ri-desc{font-size:11px;color:var(--muted);line-height:1.5}
+.priority-badge{margin-left:auto;font-size:10px;font-family:var(--mono);background:var(--surface3);border:1px solid var(--border2);color:var(--muted);padding:2px 7px;border-radius:4px}
+
+/* NFA panel */
+.automaton-wrap{overflow-x:auto;padding-bottom:8px}
+.automaton-wrap::-webkit-scrollbar{height:5px}
+.automaton-wrap::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+.nfa-svg,.dfa-svg{min-width:600px;display:block;height:auto}
+
+/* DFA Transition Table */
+.trans-table-wrap{overflow-x:auto}
+.trans-table{border-collapse:collapse;font-family:var(--mono);font-size:12px;white-space:nowrap}
+.trans-table th{background:var(--surface2);color:var(--muted);padding:9px 14px;text-align:center;font-size:11px;text-transform:uppercase;letter-spacing:.5px;border:1px solid var(--border);position:sticky;top:0;z-index:5}
+.trans-table td{padding:8px 14px;border:1px solid var(--border);text-align:center}
+.trans-table tr.start-row td:first-child{color:var(--green);font-weight:600}
+.trans-table tr.accept-row td:first-child{color:var(--accent);font-weight:600}
+.trans-table tr.accept-row td:first-child::after{content:' *';color:var(--accent2)}
+.trans-table .dead{color:var(--muted2)}
+.trans-table .valid{color:var(--green)}
+.info-box{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;font-size:13px;color:var(--muted);line-height:1.7;margin-bottom:16px}
+.info-box strong{color:var(--text)}
+.legend{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:18px}
+.legend-item{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.legend-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+
+/* SVG automaton styles */
+.state-circle{stroke-width:1.5;fill:var(--surface2)}
+.accept-double{stroke-width:1.5;fill:none;opacity:.6}
+.state-text{font-family:var(--mono);font-size:12px;fill:var(--text);text-anchor:middle;dominant-baseline:central}
+.trans-arrow{stroke:var(--muted);stroke-width:1.2;fill:none;marker-end:url(#arr)}
+.trans-label{font-family:var(--mono);font-size:10px;fill:var(--amber);text-anchor:middle}
+
+/* Token highlight on row hover */
+.token-table tbody tr{cursor:default;transition:background .1s}
+
+/* Responsive */
+@media(max-width:900px){
+  .workspace{grid-template-columns:1fr;grid-template-rows:auto 1fr}
+  .left-panel{height:50vh;border-right:none;border-bottom:1px solid var(--border)}
+}
+</style>
+</head>
+<body>
+<div class="app">
+<header>
+  <div class="logo">⚙</div>
+  <div class="header-text">
+    <h1>JS Lexical Analyzer</h1>
+    <p>Analisis Leksikal → Regex → NFA → DFA → Tabel Transisi</p>
+  </div>
+  <span class="badge">Full Pipeline</span>
+</header>
+
+<div class="workspace">
+  <!-- LEFT -->
+  <div class="left-panel">
+    <div class="panel-head"><h2>Source Code</h2></div>
+    <div class="controls-row">
+      <select id="example-select">
+        <option value="custom">— Kode Kustom —</option>
+      </select>
+      <button class="btn-analyze" id="btn-analyze">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+        Analyze
+      </button>
+    </div>
+    <div class="editor-wrap">
+      <div class="editor-label">Input</div>
+      <textarea id="source-code" spellcheck="false" placeholder="Ketik kode JavaScript di sini..."></textarea>
+    </div>
+  </div>
+
+  <!-- RIGHT -->
+  <div class="right-panel">
+    <div class="tab-bar">
+      <div class="tab active" data-tab="tokens"><span class="tab-dot"></span>Token Table</div>
+      <div class="tab" data-tab="summary"><span class="tab-dot"></span>Ringkasan</div>
+      <div class="tab" data-tab="regex"><span class="tab-dot"></span>Regular Expression</div>
+      <div class="tab" data-tab="nfa"><span class="tab-dot"></span>NFA</div>
+      <div class="tab" data-tab="dfa"><span class="tab-dot"></span>DFA</div>
+      <div class="tab" data-tab="transition"><span class="tab-dot"></span>Tabel Transisi DFA</div>
+    </div>
+
+    <div class="tab-content">
+      <!-- TOKEN TABLE -->
+      <div class="tab-pane active" id="pane-tokens">
+        <table class="token-table">
+          <thead>
+            <tr>
+              <th width="7%">No</th>
+              <th width="25%">Tipe Token</th>
+              <th width="48%">Nilai</th>
+              <th width="10%">Baris</th>
+            </tr>
+          </thead>
+          <tbody id="token-tbody">
+            <tr><td colspan="4" class="empty-state">Belum ada token. Klik Analyze.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- SUMMARY -->
+      <div class="tab-pane" id="pane-summary">
+        <div id="summary-grid" class="summary-grid"></div>
+        <div class="section-title">Distribusi Token</div>
+        <div id="bar-chart"></div>
+      </div>
+
+      <!-- REGEX -->
+      <div class="tab-pane" id="pane-regex">
+        <div class="info-box">
+          <strong>Regular Expression (Regex)</strong> adalah pola teks yang digunakan untuk mencocokkan string. Lexer JavaScript menggunakan urutan regex berikut (prioritas dari atas ke bawah). Token pertama yang cocok akan digunakan.
+        </div>
+        <div id="regex-list" class="regex-list"></div>
+      </div>
+
+      <!-- NFA -->
+      <div class="tab-pane" id="pane-nfa">
+        <div class="info-box">
+          <strong>NFA (Nondeterministic Finite Automaton)</strong> adalah model teoritis dari regex. Setiap pola regex dapat dikonversi ke NFA menggunakan konstruksi Thompson. NFA memiliki ε-transitions (transisi kosong) dan beberapa state aktif sekaligus.
+        </div>
+        <div class="section-title">Skema NFA untuk Token JavaScript</div>
+        <div class="automaton-wrap">
+          <svg id="nfa-svg" class="nfa-svg" viewBox="0 0 720 560" width="100%">
+            <defs>
+              <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M1 1L9 5L1 9" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </marker>
+              <marker id="arr-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M1 1L9 5L1 9" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </marker>
+            </defs>
+          </svg>
+        </div>
+      </div>
+
+      <!-- DFA -->
+      <div class="tab-pane" id="pane-dfa">
+        <div class="info-box">
+          <strong>DFA (Deterministic Finite Automaton)</strong> diperoleh dari NFA melalui proses subset construction. Setiap state DFA merepresentasikan satu set state NFA. DFA hanya memiliki tepat satu transisi per simbol input dari setiap state — inilah yang membuat lexer efisien.
+        </div>
+        <div class="legend">
+          <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div>State awal</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--accent);border:2px solid var(--accent2)"></div>State accept (token ditemukan)</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--muted2)"></div>State biasa</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--red)"></div>Dead state (error)</div>
+        </div>
+        <div class="automaton-wrap">
+          <svg id="dfa-svg" class="dfa-svg" viewBox="0 0 720 620" width="100%">
+          </svg>
+        </div>
+      </div>
+
+      <!-- TRANSITION TABLE -->
+      <div class="tab-pane" id="pane-transition">
+        <div class="info-box">
+          <strong>Tabel Transisi DFA</strong> merepresentasikan fungsi transisi δ(q, a) → q' secara eksplisit. Baris = state saat ini, Kolom = simbol input/kategori. <strong>*</strong> menandai accept state. State <strong>q0</strong> adalah state awal. Nilai <strong>—</strong> berarti dead/trap state.
+        </div>
+        <div class="section-title">Tabel Transisi δ(state, simbol) → state</div>
+        <div class="trans-table-wrap">
+          <div id="trans-table-container"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+// ============================================================
+// TOKEN SPEC — ordered by priority
+// ============================================================
+const TOKEN_SPEC = [
+  {type:'COMMENT_MULTI', regex:/^\/\*[\s\S]*?\*\//, desc:'Komentar multi-baris /* ... */', example:'/* ini komentar */'},
+  {type:'COMMENT_SINGLE', regex:/^\/\/.*/, desc:'Komentar satu baris // ...', example:'// komentar'},
+  {type:'STRING', regex:/^"(?:[^"\\]|\\.)*"|^'(?:[^'\\]|\\.)*'|^`(?:[^`\\]|\\.)*`/, desc:'Literal string (double, single, atau template)', example:'"hello"'},
+  {type:'KEYWORD', regex:/^(?:break|case|catch|class|const|continue|debugger|default|delete|do|else|export|extends|false|finally|for|function|if|import|in|instanceof|new|null|return|super|switch|this|throw|true|try|typeof|var|void|while|with|let|static|yield|await)\b/, desc:'Kata kunci reserved JavaScript', example:'if, else, for, function'},
+  {type:'NUMBER', regex:/^\d+(\.\d+)?([eE][+-]?\d+)?/, desc:'Literal angka (integer, desimal, eksponensial)', example:'42, 3.14'},
+  {type:'IDENTIFIER', regex:/^[a-zA-Z_$][a-zA-Z0-9_$]*/, desc:'Nama variabel, fungsi, atau identifier', example:'myVar, _x, $id'},
+  {type:'OPERATOR', regex:/^(?:===|!==|==|!=|<=|>=|<|>|\+\+|--|\+|-|\*|\/|%|\|\||&&|!|=|\||&|\^|~|<<|>>|>>>|\?|:)/, desc:'Operator aritmatika, logika, perbandingan, bitwise', example:'===, +, &&'},
+  {type:'FUNCTION', regex:/^[{}()[\].,;]/, desc:'Tanda baca dan pembatas blok kode', example:'{ } ( ) [ ]'},
+  {type:'WHITESPACE', regex:/^\s+/, desc:'Spasi, tab, newline (diabaikan)', example:'" ", \\n'},
+  {type:'UNKNOWN', regex:/^./, desc:'Simbol tidak dikenal', example:'@, #'},
+];
+
+const EXAMPLES = {
+  '1. Variabel & Kondisi':`let x = 10;\nlet y = 20;\nlet z = x + y;\nif (z > 25) {\n    console.log("besar");\n} else {\n    console.log("kecil");\n}`,
+  '2. Fungsi & Arrow':`function hitungNilai(nilai, bobot) {\n    let grade;\n    if (nilai >= 80) grade = "A";\n    else if (nilai >= 70) grade = "B";\n    else grade = "C";\n    return nilai * bobot;\n}\nconst nilaiAkhir = hitungNilai(85, 0.5);\nconsole.log(nilaiAkhir);`,
+  '3. Class & Objek':`class Mahasiswa {\n    constructor(nama, nim) {\n        this.nama = nama;\n        this.nim = nim;\n    }\n    info() {\n        return \`Nama: \${this.nama}\`;\n    }\n}\nconst mhs = new Mahasiswa("Ali", 230105005);\nconsole.log(mhs.info());`,
+  '4. Loop & Array':`const nilai = [85, 70, 90, 60, 75];\nlet total = 0;\nfor (let n of nilai) {\n    total += n;\n}\nconst rata = total / nilai.length;\nconsole.log(rata);`
+};
+
+// ============================================================
+// TOKENIZER
+// ============================================================
+function tokenize(src) {
+  let tokens = [], lineNum = 1, pos = 0;
+  while (pos < src.length) {
+    let remaining = src.slice(pos), match = null, matchedType = null;
+    for (let spec of TOKEN_SPEC) {
+      match = spec.regex.exec(remaining);
+      if (match) { matchedType = spec.type; break; }
+    }
+    if (match) {
+      let value = match[0];
+      if (matchedType !== 'WHITESPACE') tokens.push({type:matchedType, value, line:lineNum});
+      lineNum += (value.match(/\n/g)||[]).length;
+      pos += value.length;
+    } else pos++;
+  }
+  return tokens;
+}
+
+// ============================================================
+// TOKEN COLORS
+// ============================================================
+const TYPE_COLORS = {
+  KEYWORD:'#a78bfa', IDENTIFIER:'#60a5fa', NUMBER:'#34d399', STRING:'#fbbf24',
+  OPERATOR:'#f87171', FUNCTION:'#e879f9', COMMENT_SINGLE:'#9ca3af', COMMENT_MULTI:'#9ca3af',
+  UNKNOWN:'#6b7280', WHITESPACE:'#4b5563'
+};
+const BAR_COLORS = ['#4f8cff','#7c5cfc','#22d3a0','#f5a623','#ff5f5f','#e06bff','#9ca3af','#60a5fa','#34d399'];
+
+// ============================================================
+// RENDER TOKENS
+// ============================================================
+function renderTokens(tokens) {
+  const tbody = document.getElementById('token-tbody');
+  if (!tokens.length) { tbody.innerHTML='<tr><td colspan="4" class="empty-state">Tidak ada token ditemukan.</td></tr>'; return; }
+  tbody.innerHTML = tokens.map((t,i) => {
+    const div = document.createElement('div'); div.textContent = t.value;
+    const safe = div.innerHTML;
+    const cls = 'tt-'+t.type;
+    return `<tr>
+      <td style="text-align:center;color:var(--muted);font-family:var(--mono);font-size:12px">${i+1}</td>
+      <td><span class="token-type ${cls}">${t.type}</span></td>
+      <td><code style="font-family:var(--mono);font-size:12px;color:var(--text)">${safe}</code></td>
+      <td style="text-align:center;font-family:var(--mono);font-size:12px;color:var(--muted)">${t.line}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ============================================================
+// RENDER SUMMARY
+// ============================================================
+function renderSummary(tokens) {
+  const counter = {};
+  tokens.forEach(t => { counter[t.type] = (counter[t.type]||0)+1; });
+  const total = tokens.length;
+  const sorted = Object.entries(counter).sort((a,b)=>b[1]-a[1]);
+
+  const grid = document.getElementById('summary-grid');
+  grid.innerHTML = `
+    <div class="summary-card"><div class="sc-label">Total Token</div><div class="sc-value" style="color:var(--accent)">${total}</div></div>
+    <div class="summary-card"><div class="sc-label">Tipe Unik</div><div class="sc-value" style="color:var(--green)">${sorted.length}</div></div>
+    <div class="summary-card"><div class="sc-label">Token Terbanyak</div><div class="sc-value" style="color:var(--amber);font-size:14px;padding-top:4px">${sorted[0]?sorted[0][0]:'-'}</div></div>
+  `;
+
+  const bar = document.getElementById('bar-chart');
+  const max = sorted[0]?sorted[0][1]:1;
+  bar.innerHTML = sorted.map(([type,count],i) => {
+    const pct = (count/max*100).toFixed(0);
+    const color = BAR_COLORS[i%BAR_COLORS.length];
+    return `<div class="bar-row">
+      <div class="bar-label" title="${type}">${type}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${color}"></div></div>
+      <div class="bar-count">${count}</div>
+    </div>`;
+  }).join('');
+}
+
+// ============================================================
+// RENDER REGEX
+// ============================================================
+function renderRegex() {
+  const container = document.getElementById('regex-list');
+  container.innerHTML = TOKEN_SPEC.map((spec, i) => {
+    const color = TYPE_COLORS[spec.type]||'#9ca3af';
+    return `<div class="regex-item">
+      <div class="ri-header">
+        <span class="token-type tt-${spec.type}" style="color:${color}">${spec.type}</span>
+        <span class="priority-badge">Prioritas ${i+1}</span>
+      </div>
+      <div class="ri-regex">${spec.regex.toString().replace(/^\/\^?|\/[gimsuy]*$/g,'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
+      <div class="ri-desc">${spec.desc} <br><span style="color:var(--muted2)">Contoh: <code style="font-family:var(--mono);font-size:11px;color:var(--amber)">${spec.example}</code></span></div>
+    </div>`;
+  }).join('');
+}
+
+// ============================================================
+// RENDER NFA (Thompson Construction — simplified visual)
+// ============================================================
+function renderNFA() {
+  const svg = document.getElementById('nfa-svg');
+  // We draw a conceptual NFA for the lexer: one big start state branches via ε to each token's NFA
+  const tokens = [
+    {name:'COMMENT_MULTI', short:'/*...*/', color:'#9ca3af'},
+    {name:'COMMENT_SINGLE', short:'//...', color:'#9ca3af'},
+    {name:'STRING', short:'"..."', color:'#fbbf24'},
+    {name:'KEYWORD', short:'keyword', color:'#a78bfa'},
+    {name:'NUMBER', short:'[0-9]+', color:'#34d399'},
+    {name:'IDENTIFIER', short:'[a-zA-Z_]', color:'#60a5fa'},
+    {name:'OPERATOR', short:'op', color:'#f87171'},
+    {name:'FUNCTION', short:'punct', color:'#e879f9'},
+  ];
+
+  const cx0 = 60, startY = 280;
+  const colX = 220, finalX = 560;
+  const rowH = 55, firstY = startY - (tokens.length-1)*rowH/2;
+
+  let content = `<defs>
+    <marker id="nfa-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M1 1L9 5L1 9" fill="none" stroke="#6b7280" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="nfa-arr2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M1 1L9 5L1 9" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>`;
+
+  // Start state
+  content += `<circle cx="${cx0}" cy="${startY}" r="22" stroke="var(--green)" stroke-width="2" fill="#0f1f14"/>
+  <text x="${cx0}" y="${startY}" class="state-text" style="fill:var(--green);font-weight:600">q₀</text>
+  <text x="${cx0}" y="${startY+36}" text-anchor="middle" style="font-family:var(--mono);font-size:10px;fill:var(--green)">START</text>
+  <line x1="${cx0-30}" y1="${startY}" x2="${cx0-24}" y2="${startY}" stroke="var(--green)" stroke-width="1.5" marker-end="url(#nfa-arr2)"/>`;
+
+  tokens.forEach((tok, i) => {
+    const ty = firstY + i * rowH;
+    const qiX = colX, finalStateX = finalX;
+    const qi = `q${i*2+1}`, qf = `q${i*2+2}`;
+
+    // ε-transition from start to qi
+    // Draw curved line from start to qi
+    const dx = qiX - cx0 - 22, dy = ty - startY;
+    const mx = cx0 + dx/2, my = startY + dy/2;
+    content += `<path d="M${cx0+20} ${startY} Q${mx-20} ${my} ${qiX-22} ${ty}"
+      stroke="var(--muted2)" stroke-width="1" stroke-dasharray="3 3" fill="none" marker-end="url(#nfa-arr)"/>`;
+    content += `<text x="${mx-28}" y="${my-4}" style="font-family:var(--mono);font-size:9px;fill:var(--muted2)">ε</text>`;
+
+    // qi state
+    content += `<circle cx="${qiX}" cy="${ty}" r="18" stroke="${tok.color}" stroke-width="1.5" fill="var(--surface2)"/>
+    <text x="${qiX}" y="${ty}" class="state-text" style="fill:${tok.color};font-size:10px">${qi}</text>`;
+
+    // Token label above
+    content += `<text x="${qiX}" y="${ty-24}" text-anchor="middle" style="font-family:var(--mono);font-size:9px;fill:${tok.color}">${tok.short}</text>`;
+
+    // Transition from qi to accept state
+    content += `<line x1="${qiX+18}" y1="${ty}" x2="${finalStateX-22}" y2="${ty}" stroke="${tok.color}" stroke-width="1.2" fill="none" marker-end="url(#nfa-arr)"/>`;
+
+    // Accept state (double circle)
+    content += `<circle cx="${finalStateX}" cy="${ty}" r="18" stroke="${tok.color}" stroke-width="1.5" fill="var(--surface2)"/>
+    <circle cx="${finalStateX}" cy="${ty}" r="13" stroke="${tok.color}" stroke-width="1" fill="none" opacity="0.5"/>
+    <text x="${finalStateX}" y="${ty}" class="state-text" style="fill:${tok.color};font-size:10px">${qf}</text>
+    <text x="${finalStateX+26}" y="${ty+4}" style="font-family:var(--mono);font-size:9px;fill:${tok.color}">${tok.name}</text>`;
+  });
+
+  // Viewbox height fitting
+  const totalH = tokens.length * rowH + 80;
+  svg.setAttribute('viewBox', `0 20 720 ${Math.max(totalH, 300)}`);
+  svg.innerHTML = content;
+}
+
+// ============================================================
+// RENDER DFA — horizontal lane layout, no overlapping labels
+// ============================================================
+function renderDFA() {
+  const svg = document.getElementById('dfa-svg');
+
+  // Layout: each token type gets its own horizontal "lane"
+  // q0 (start) on the left col, mid states in col2, accept states in col3
+  // dead state sits in a separate row at the bottom
+  const R = 22; // circle radius
+  const COL0 = 75;   // start state x
+  const COL1 = 250;  // mid state x
+  const COL2 = 440;  // accept state x
+  const COL3 = 630;  // dead state x (right side)
+
+  // Lanes — each row is spaced 80px apart
+  const LANE_H = 80;
+  const LANE_TOP = 40;
+
+  // [id, col, lane, label, type, color, note, noteAnchor]
+  // noteAnchor: 'below' | 'above' | 'right'
+  const statesDef = [
+    // col, lane,  id,       label,    type,      color,        token name,           noteDir
+    [COL0,   3,  'q0',     'q0',     'start',   '#22d3a0',    'START',              'left'],
+    [COL1,   0,  'q1',     'q1',     'normal',  '#60a5fa',    '[/]',                'above'],
+    [COL2,   0,  'q2',     'q2*',    'accept',  '#60a5fa',    'COMMENT_SINGLE',     'above'],
+    [COL2,   1,  'q3',     'q3*',    'accept',  '#9ca3af',    'COMMENT_MULTI',      'above'],
+    [COL1,   2,  'q4',     'q4',     'normal',  '#fbbf24',    '["\'`]',             'above'],
+    [COL2,   2,  'q5',     'q5*',    'accept',  '#fbbf24',    'STRING',             'above'],
+    [COL1,   3,  'q6',     'q6',     'normal',  '#34d399',    '[0-9]',              'above'],
+    [COL2,   3,  'q7',     'q7*',    'accept',  '#34d399',    'NUMBER',             'above'],
+    [COL1,   4,  'q8',     'q8',     'normal',  '#a78bfa',    '[a-zA-Z_$]',         'above'],
+    [COL2,   4,  'q9',     'q9*',    'accept',  '#a78bfa',    'KEYWORD / ID',       'above'],
+    [COL1,   5,  'q10',    'q10',    'normal',  '#f87171',    '[op chars]',         'above'],
+    [COL2,   5,  'q11',    'q11*',   'accept',  '#f87171',    'OPERATOR',           'above'],
+    [COL2,   6,  'q12',    'q12*',   'accept',  '#e879f9',    'PUNCT {}()[]',       'above'],
+    [COL3,   3,  'qdead',  'dead',   'dead',    '#ff5f5f',    'ERROR',              'right'],
+  ];
+
+  // Build lookup map
+  const stMap = {};
+  const states = statesDef.map(([x, lane, id, label, type, color, note, noteDir]) => {
+    const y = LANE_TOP + lane * LANE_H;
+    const s = {id, x, y, label, type, color, note, noteDir};
+    stMap[id] = s;
+    return s;
+  });
+
+  // Transitions: [fromId, toId, edgeLabel, pathType, labelOffX, labelOffY]
+  // pathType: 'straight' | 'curved-up' | 'curved-down' | 'below-bend'
+  const transDef = [
+    // from     to       label            path          lox   loy
+    ['q0',   'q1',    '/',              'diag',       -12,  -8],
+    ['q1',   'q2',    '/ →',            'straight',    0,  -10],
+    ['q1',   'q3',    '* →',            'diag-down',  -10,  12],
+    ['q0',   'q4',    '"/ \'/`',        'diag',       -10,  -8],
+    ['q4',   'q5',    '" / \' / `',     'straight',    0,  -10],
+    ['q0',   'q6',    '[0-9]',          'straight',    0,  -10],
+    ['q6',   'q7',    '[0-9] / .',      'straight',    0,  -10],
+    ['q0',   'q8',    '[a-z_$]',        'diag',       -14,  -8],
+    ['q8',   'q9',    '[a-zA-Z0-9]',    'straight',    0,  -10],
+    ['q0',   'q10',   'op char',        'diag',       -16,  -8],
+    ['q10',  'q11',   'op cont.',       'straight',    0,  -10],
+    ['q0',   'q12',   '{}()[].,;',      'diag',       -14,  -8],
+    ['q0',   'qdead', 'other',          'to-right',   0,   -10],
+  ];
+
+  // Total height for viewBox
+  const maxLane = Math.max(...statesDef.map(s=>s[1]));
+  const totalH = LANE_TOP + maxLane * LANE_H + 80;
+
+  let defs = `<defs>
+    <marker id="dfa-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M1 1L9 5L1 9" fill="none" stroke="#4b5563" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>`;
+
+  let edgesHTML = '';
+  let labelsHTML = '';
+
+  transDef.forEach(([fromId, toId, label, pathType, lox, loy]) => {
+    const f = stMap[fromId], t = stMap[toId];
+    const edgeColor = t.color === '#ff5f5f' ? '#ff5f5f' : '#3d4556';
+
+    let d = '';
+    let lx, ly;
+
+    if (pathType === 'straight') {
+      // Pure horizontal
+      d = `M${f.x+R} ${f.y} L${t.x-R} ${t.y}`;
+      lx = (f.x + t.x) / 2 + lox;
+      ly = f.y + loy;
+    } else if (pathType === 'diag') {
+      // Diagonal from col0 to col1
+      d = `M${f.x+R} ${f.y} L${t.x-R} ${t.y}`;
+      lx = (f.x + t.x) / 2 + lox;
+      ly = (f.y + t.y) / 2 + loy;
+    } else if (pathType === 'diag-down') {
+      d = `M${f.x+R} ${f.y} L${t.x-R} ${t.y}`;
+      lx = (f.x + t.x) / 2 + lox;
+      ly = (f.y + t.y) / 2 + loy;
+    } else if (pathType === 'to-right') {
+      // q0 → dead: curved path going right and hitting dead state
+      const midX = (f.x + t.x) / 2;
+      const midY = f.y - 30;
+      d = `M${f.x} ${f.y-R} Q${midX} ${midY} ${t.x-R} ${t.y}`;
+      lx = midX + lox;
+      ly = midY + loy - 4;
+    } else {
+      d = `M${f.x+R} ${f.y} L${t.x-R} ${t.y}`;
+      lx = (f.x + t.x) / 2 + lox;
+      ly = (f.y + t.y) / 2 + loy;
+    }
+
+    edgesHTML += `<path d="${d}" stroke="${edgeColor}" stroke-width="1.3" fill="none" marker-end="url(#dfa-a)" opacity="0.75"/>`;
+    // Label background pill for readability
+    const tw = label.length * 5.5 + 8;
+    labelsHTML += `<rect x="${lx - tw/2}" y="${ly-9}" width="${tw}" height="13" rx="3" fill="#111318" opacity="0.85"/>`;
+    labelsHTML += `<text x="${lx}" y="${ly}" text-anchor="middle" dominant-baseline="central" style="font-family:var(--mono);font-size:8.5px;fill:#f5a623">${label}</text>`;
+  });
+
+  // Draw states
+  let statesHTML = '';
+  states.forEach(st => {
+    const isAccept = st.type === 'accept';
+    const isStart  = st.type === 'start';
+    const isDead   = st.type === 'dead';
+    const bg = isStart ? '#0c1f16' : isDead ? '#1f0c0c' : isAccept ? '#131520' : '#181b22';
+
+    statesHTML += `<circle cx="${st.x}" cy="${st.y}" r="${R}" stroke="${st.color}" stroke-width="${isAccept?2:1.5}" fill="${bg}"/>`;
+    if (isAccept) {
+      statesHTML += `<circle cx="${st.x}" cy="${st.y}" r="${R-6}" stroke="${st.color}" stroke-width="1" fill="none" opacity="0.45"/>`;
+    }
+    statesHTML += `<text x="${st.x}" y="${st.y}" text-anchor="middle" dominant-baseline="central" style="font-family:var(--mono);font-size:10px;fill:${st.color};font-weight:600">${st.label}</text>`;
+
+    // Note label — always placed above the state circle, never overlapping edges below
+    const noteY = st.y - R - 6;
+    const noteX = st.x;
+    const tw2 = st.note.length * 5.8 + 10;
+    statesHTML += `<rect x="${noteX - tw2/2}" y="${noteY - 12}" width="${tw2}" height="13" rx="3" fill="#111318" opacity="0.9"/>`;
+    statesHTML += `<text x="${noteX}" y="${noteY - 5}" text-anchor="middle" dominant-baseline="central" style="font-family:var(--mono);font-size:8px;fill:${st.color};opacity:.9">${st.note}</text>`;
+
+    // Entry arrow for start state
+    if (isStart) {
+      statesHTML += `<line x1="${st.x-48}" y1="${st.y}" x2="${st.x-R-2}" y2="${st.y}" stroke="${st.color}" stroke-width="1.5" marker-end="url(#dfa-a)"/>`;
+      statesHTML += `<text x="${st.x-52}" y="${st.y}" text-anchor="end" dominant-baseline="central" style="font-family:var(--mono);font-size:8px;fill:${st.color}">→</text>`;
+    }
+  });
+
+  svg.setAttribute('viewBox', `0 0 720 ${totalH}`);
+  svg.setAttribute('height', totalH);
+  svg.innerHTML = defs + edgesHTML + labelsHTML + statesHTML;
+}
+
+// ============================================================
+// RENDER TRANSITION TABLE
+// ============================================================
+function renderTransitionTable(tokens) {
+  // DFA states and their transitions for JS lexer
+  const dfaStates = [
+    {state:'q0', isStart:true, isAccept:false,
+     letter:'q1', digit:'q3', quote:'q5', slash:'q7', op:'q10', punct:'q11', other:'dead'},
+    {state:'q1', isStart:false, isAccept:false,
+     letter:'q2*', digit:'q2*', quote:'q2*', slash:'q2*', op:'q2*', punct:'q2*', other:'q2*'},
+    {state:'q2*', isStart:false, isAccept:true, desc:'IDENTIFIER',
+     letter:'q2*', digit:'q2*', quote:'dead', slash:'dead', op:'dead', punct:'dead', other:'dead'},
+    {state:'q3', isStart:false, isAccept:false,
+     letter:'dead', digit:'q4*', quote:'dead', slash:'dead', op:'dead', punct:'dead', other:'q4*'},
+    {state:'q4*', isStart:false, isAccept:true, desc:'NUMBER',
+     letter:'dead', digit:'q4*', quote:'dead', slash:'dead', op:'dead', punct:'dead', other:'dead'},
+    {state:'q5', isStart:false, isAccept:false,
+     letter:'q5', digit:'q5', quote:'q6*', slash:'q5', op:'q5', punct:'q5', other:'q5'},
+    {state:'q6*', isStart:false, isAccept:true, desc:'STRING',
+     letter:'dead', digit:'dead', quote:'dead', slash:'dead', op:'dead', punct:'dead', other:'dead'},
+    {state:'q7', isStart:false, isAccept:false,
+     letter:'q8', digit:'dead', quote:'dead', slash:'q9*', op:'q10*', punct:'dead', other:'dead'},
+    {state:'q8', isStart:false, isAccept:false,
+     letter:'q8', digit:'q8', quote:'q8', slash:'q9*', op:'q8', punct:'q8', other:'q8'},
+    {state:'q9*', isStart:false, isAccept:true, desc:'COMMENT_SINGLE',
+     letter:'dead', digit:'dead', quote:'dead', slash:'dead', op:'dead', punct:'dead', other:'dead'},
+    {state:'q10*', isStart:false, isAccept:true, desc:'OPERATOR',
+     letter:'dead', digit:'dead', quote:'dead', slash:'dead', op:'q10*', punct:'dead', other:'dead'},
+    {state:'q10', isStart:false, isAccept:false,
+     letter:'dead', digit:'dead', quote:'dead', slash:'dead', op:'q10*', punct:'dead', other:'dead'},
+    {state:'q11*', isStart:false, isAccept:true, desc:'PUNCT',
+     letter:'dead', digit:'dead', quote:'dead', slash:'dead', op:'dead', punct:'dead', other:'dead'},
+    {state:'dead', isStart:false, isAccept:false,
+     letter:'dead', digit:'dead', quote:'dead', slash:'dead', op:'dead', punct:'dead', other:'dead'},
+  ];
+
+  const cols = [
+    {key:'letter', label:'letter [a-zA-Z_]'},
+    {key:'digit', label:'digit [0-9]'},
+    {key:'quote', label:"quote [\"'/`]"},
+    {key:'slash', label:'slash [/]'},
+    {key:'op', label:'op [+-*%=...]'},
+    {key:'punct', label:'punct [{}()[]...]'},
+    {key:'other', label:'other'},
+  ];
+
+  // Count token type occurrences if tokens given
+  const counts = {};
+  if (tokens) tokens.forEach(t=>{counts[t.type]=(counts[t.type]||0)+1});
+
+  let html = `<table class="trans-table">
+    <thead><tr>
+      <th>State</th>
+      <th>Accept?</th>
+      <th>Token Type</th>
+      ${cols.map(c=>`<th>${c.label}</th>`).join('')}
+    </tr></thead>
+    <tbody>`;
+
+  dfaStates.forEach(row => {
+    const rowClass = row.isStart?'start-row':row.isAccept?'accept-row':'';
+    const acceptStr = row.isAccept ? `<span style="color:var(--green)">✓</span>` : `<span style="color:var(--muted2)">—</span>`;
+    const descStr = row.desc ? `<span style="font-family:var(--mono);font-size:11px;color:var(--accent)">${row.desc}${counts[row.desc]?` (${counts[row.desc]})`:''}</span>` : `<span style="color:var(--muted2)">—</span>`;
+
+    html += `<tr class="${rowClass}">
+      <td>${row.state}</td>
+      <td>${acceptStr}</td>
+      <td>${descStr}</td>
+      ${cols.map(c => {
+        const val = row[c.key];
+        const isDead = val==='dead';
+        const isAccept = val&&val.includes('*');
+        return `<td class="${isDead?'dead':isAccept?'valid':''}">${isDead?'—':val}</td>`;
+      }).join('')}
+    </tr>`;
+  });
+
+  html += `</tbody></table>`;
+  document.getElementById('trans-table-container').innerHTML = html;
+}
+
+// ============================================================
+// INIT
+// ============================================================
+document.addEventListener('DOMContentLoaded', () => {
+  const sel = document.getElementById('example-select');
+  const ta  = document.getElementById('source-code');
+
+  Object.keys(EXAMPLES).forEach(k => {
+    const opt = document.createElement('option');
+    opt.value = k; opt.textContent = k;
+    sel.appendChild(opt);
+  });
+
+  sel.addEventListener('change', e => {
+    ta.value = e.target.value==='custom' ? '' : (EXAMPLES[e.target.value]||'');
+  });
+
+  // Tabs
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+      document.querySelectorAll('.tab-pane').forEach(p=>p.classList.remove('active'));
+      tab.classList.add('active');
+      const pane = document.getElementById('pane-'+tab.dataset.tab);
+      if (pane) pane.classList.add('active');
+    });
+  });
+
+  // Render static panels immediately
+  renderRegex();
+  renderNFA();
+  renderDFA();
+  renderTransitionTable(null);
+
+  // Analyze
+  document.getElementById('btn-analyze').addEventListener('click', () => {
+    const src = ta.value.trim();
+    if (!src) { alert('Source code kosong!\nKetik atau pilih contoh dari dropdown.'); return; }
+    const tokens = tokenize(src);
+    renderTokens(tokens);
+    renderSummary(tokens);
+    renderTransitionTable(tokens);
+
+    // Switch to token tab
+    document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+    document.querySelectorAll('.tab-pane').forEach(p=>p.classList.remove('active'));
+    document.querySelector('.tab[data-tab="tokens"]').classList.add('active');
+    document.getElementById('pane-tokens').classList.add('active');
+  });
+});
+</script>
+</body>
+</html>
