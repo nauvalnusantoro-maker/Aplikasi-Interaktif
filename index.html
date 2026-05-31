@@ -384,16 +384,43 @@ function renderSummary(tokens) {
 }
 
 // ============================================================
-// RENDER REGEX
+// RENDER REGEX  (activeTypes = Set of token types found, or null for init)
 // ============================================================
-function renderRegex() {
+function renderRegex(activeTypes) {
   const container = document.getElementById('regex-list');
-  container.innerHTML = TOKEN_SPEC.map((spec, i) => {
+
+  // Header state hint
+  let hintHTML = '';
+  if (activeTypes) {
+    const found = TOKEN_SPEC.filter(s => activeTypes.has(s.type) && s.type !== 'WHITESPACE');
+    hintHTML = `<div class="info-box" style="margin-bottom:14px;border-color:rgba(79,140,255,0.3)">
+      <strong style="color:var(--accent)">${found.length} regex aktif</strong> — tipe token yang ditemukan dalam source code ditandai dengan <span style="color:var(--green)">✦</span>. Tipe yang tidak muncul disamarkan.
+    </div>`;
+  }
+
+  container.innerHTML = hintHTML + TOKEN_SPEC.map((spec, i) => {
     const color = TYPE_COLORS[spec.type]||'#9ca3af';
-    return `<div class="regex-item">
+    const isActive = activeTypes ? activeTypes.has(spec.type) : true;
+    const isWhitespace = spec.type === 'WHITESPACE';
+    // Count how many times this regex was matched
+    const count = activeTypes && activeTypes.counts ? (activeTypes.counts[spec.type] || 0) : null;
+
+    const opacity = (!activeTypes || isActive) ? '1' : '0.28';
+    const borderHighlight = (activeTypes && isActive && !isWhitespace)
+      ? 'border-color:rgba(79,140,255,0.45);box-shadow:0 0 0 1px rgba(79,140,255,0.15)'
+      : '';
+
+    const activeTag = (activeTypes && isActive && !isWhitespace)
+      ? `<span style="color:var(--green);font-size:13px;margin-left:4px" title="Ditemukan dalam kode">✦</span>` : '';
+    const countTag = (count !== null && count > 0)
+      ? `<span style="margin-left:auto;margin-right:8px;background:rgba(34,211,160,0.12);border:1px solid rgba(34,211,160,0.25);color:var(--green);font-size:10px;font-family:var(--mono);padding:2px 8px;border-radius:12px">${count}×</span>` : '';
+
+    return `<div class="regex-item" style="opacity:${opacity};transition:opacity .3s,border-color .3s,box-shadow .3s;${borderHighlight}">
       <div class="ri-header">
         <span class="token-type tt-${spec.type}" style="color:${color}">${spec.type}</span>
-        <span class="priority-badge">Prioritas ${i+1}</span>
+        ${activeTag}
+        ${countTag}
+        <span class="priority-badge" style="margin-left:${countTag?'0':'auto'}">Prioritas ${i+1}</span>
       </div>
       <div class="ri-regex">${spec.regex.toString().replace(/^\/\^?|\/[gimsuy]*$/g,'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
       <div class="ri-desc">${spec.desc} <br><span style="color:var(--muted2)">Contoh: <code style="font-family:var(--mono);font-size:11px;color:var(--amber)">${spec.example}</code></span></div>
@@ -404,10 +431,10 @@ function renderRegex() {
 // ============================================================
 // RENDER NFA (Thompson Construction — simplified visual)
 // ============================================================
-function renderNFA() {
+function renderNFA(activeTypes) {
   const svg = document.getElementById('nfa-svg');
   // We draw a conceptual NFA for the lexer: one big start state branches via ε to each token's NFA
-  const tokens = [
+  const allTokens = [
     {name:'COMMENT_MULTI', short:'/*...*/', color:'#9ca3af'},
     {name:'COMMENT_SINGLE', short:'//...', color:'#9ca3af'},
     {name:'STRING', short:'"..."', color:'#fbbf24'},
@@ -420,7 +447,7 @@ function renderNFA() {
 
   const cx0 = 60, startY = 280;
   const colX = 220, finalX = 560;
-  const rowH = 55, firstY = startY - (tokens.length-1)*rowH/2;
+  const rowH = 55, firstY = startY - (allTokens.length-1)*rowH/2;
 
   let content = `<defs>
     <marker id="nfa-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
@@ -429,7 +456,18 @@ function renderNFA() {
     <marker id="nfa-arr2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
       <path d="M1 1L9 5L1 9" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
     </marker>
+    <marker id="nfa-arr-active" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M1 1L9 5L1 9" fill="none" stroke="#22d3a0" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <filter id="glow"><feGaussianBlur stdDeviation="2" result="coloredBlur"/><feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
   </defs>`;
+
+  // State hint banner
+  if (activeTypes) {
+    const activeCount = allTokens.filter(t => activeTypes.has(t.name)).length;
+    content += `<rect x="0" y="0" width="720" height="22" fill="rgba(79,140,255,0.08)" rx="0"/>
+    <text x="360" y="13" text-anchor="middle" dominant-baseline="central" style="font-family:var(--mono);font-size:9px;fill:var(--accent);opacity:0.8">${activeCount} dari ${allTokens.length} jalur NFA aktif berdasarkan source code</text>`;
+  }
 
   // Start state
   content += `<circle cx="${cx0}" cy="${startY}" r="22" stroke="var(--green)" stroke-width="2" fill="#0f1f14"/>
@@ -437,38 +475,57 @@ function renderNFA() {
   <text x="${cx0}" y="${startY+36}" text-anchor="middle" style="font-family:var(--mono);font-size:10px;fill:var(--green)">START</text>
   <line x1="${cx0-30}" y1="${startY}" x2="${cx0-24}" y2="${startY}" stroke="var(--green)" stroke-width="1.5" marker-end="url(#nfa-arr2)"/>`;
 
-  tokens.forEach((tok, i) => {
+  allTokens.forEach((tok, i) => {
     const ty = firstY + i * rowH;
     const qiX = colX, finalStateX = finalX;
     const qi = `q${i*2+1}`, qf = `q${i*2+2}`;
+    const isActive = !activeTypes || activeTypes.has(tok.name);
+    const opacity = isActive ? '1' : '0.2';
+    const stateColor = isActive ? tok.color : '#3d4556';
+    const arrowColor = isActive ? '#22d3a0' : 'var(--muted2)';
+    const dashArray = isActive ? '' : 'stroke-dasharray="3 3"';
+    const glowFilter = isActive ? 'filter="url(#glow)"' : '';
+    const arrMarker = isActive ? 'url(#nfa-arr-active)' : 'url(#nfa-arr)';
+
+    // Count badge
+    const count = activeTypes && activeTypes.counts ? (activeTypes.counts[tok.name] || 0) : 0;
 
     // ε-transition from start to qi
-    // Draw curved line from start to qi
     const dx = qiX - cx0 - 22, dy = ty - startY;
     const mx = cx0 + dx/2, my = startY + dy/2;
     content += `<path d="M${cx0+20} ${startY} Q${mx-20} ${my} ${qiX-22} ${ty}"
-      stroke="var(--muted2)" stroke-width="1" stroke-dasharray="3 3" fill="none" marker-end="url(#nfa-arr)"/>`;
-    content += `<text x="${mx-28}" y="${my-4}" style="font-family:var(--mono);font-size:9px;fill:var(--muted2)">ε</text>`;
+      stroke="${arrowColor}" stroke-width="${isActive?1.4:0.8}" ${dashArray} fill="none" marker-end="${arrMarker}" opacity="${opacity}"/>`;
+    content += `<text x="${mx-28}" y="${my-4}" style="font-family:var(--mono);font-size:9px;fill:${isActive?'var(--muted)':'var(--muted2)'};opacity:${opacity}">ε</text>`;
 
     // qi state
-    content += `<circle cx="${qiX}" cy="${ty}" r="18" stroke="${tok.color}" stroke-width="1.5" fill="var(--surface2)"/>
-    <text x="${qiX}" y="${ty}" class="state-text" style="fill:${tok.color};font-size:10px">${qi}</text>`;
+    const qiBg = isActive ? 'var(--surface2)' : '#14161c';
+    content += `<circle cx="${qiX}" cy="${ty}" r="18" stroke="${stateColor}" stroke-width="${isActive?2:1}" fill="${qiBg}" opacity="${opacity}" ${isActive?glowFilter:''}/>
+    <text x="${qiX}" y="${ty}" class="state-text" style="fill:${stateColor};font-size:10px;opacity:${opacity}">${qi}</text>`;
 
-    // Token label above
-    content += `<text x="${qiX}" y="${ty-24}" text-anchor="middle" style="font-family:var(--mono);font-size:9px;fill:${tok.color}">${tok.short}</text>`;
+    // Token label
+    content += `<text x="${qiX}" y="${ty-24}" text-anchor="middle" style="font-family:var(--mono);font-size:9px;fill:${stateColor};opacity:${opacity}">${tok.short}</text>`;
 
-    // Transition from qi to accept state
-    content += `<line x1="${qiX+18}" y1="${ty}" x2="${finalStateX-22}" y2="${ty}" stroke="${tok.color}" stroke-width="1.2" fill="none" marker-end="url(#nfa-arr)"/>`;
+    // Transition line qi → qf
+    const lineColor = isActive ? stateColor : '#2d3142';
+    content += `<line x1="${qiX+18}" y1="${ty}" x2="${finalStateX-22}" y2="${ty}" stroke="${lineColor}" stroke-width="${isActive?1.5:0.8}" fill="none" marker-end="${arrMarker}" opacity="${opacity}"/>`;
 
     // Accept state (double circle)
-    content += `<circle cx="${finalStateX}" cy="${ty}" r="18" stroke="${tok.color}" stroke-width="1.5" fill="var(--surface2)"/>
-    <circle cx="${finalStateX}" cy="${ty}" r="13" stroke="${tok.color}" stroke-width="1" fill="none" opacity="0.5"/>
-    <text x="${finalStateX}" y="${ty}" class="state-text" style="fill:${tok.color};font-size:10px">${qf}</text>
-    <text x="${finalStateX+26}" y="${ty+4}" style="font-family:var(--mono);font-size:9px;fill:${tok.color}">${tok.name}</text>`;
+    content += `<circle cx="${finalStateX}" cy="${ty}" r="18" stroke="${stateColor}" stroke-width="${isActive?1.5:1}" fill="${qiBg}" opacity="${opacity}" ${isActive?glowFilter:''}/>
+    <circle cx="${finalStateX}" cy="${ty}" r="13" stroke="${stateColor}" stroke-width="${isActive?1:0.5}" fill="none" opacity="${isActive?0.5:0.15}"/>
+    <text x="${finalStateX}" y="${ty}" class="state-text" style="fill:${stateColor};font-size:10px;opacity:${opacity}">${qf}</text>`;
+
+    // Token name label + count badge
+    content += `<text x="${finalStateX+26}" y="${ty+4}" style="font-family:var(--mono);font-size:9px;fill:${stateColor};opacity:${opacity}">${tok.name}</text>`;
+    if (isActive && count > 0) {
+      const bx = finalStateX + 26;
+      const by = ty + 16;
+      content += `<rect x="${bx}" y="${by-7}" width="${String(count+'×').length*6+8}" height="12" rx="5" fill="rgba(34,211,160,0.15)" opacity="0.9"/>
+      <text x="${bx+4}" y="${by}" dominant-baseline="central" style="font-family:var(--mono);font-size:8px;fill:#22d3a0">${count}×</text>`;
+    }
   });
 
   // Viewbox height fitting
-  const totalH = tokens.length * rowH + 80;
+  const totalH = allTokens.length * rowH + 80;
   svg.setAttribute('viewBox', `0 20 720 ${Math.max(totalH, 300)}`);
   svg.innerHTML = content;
 }
@@ -476,7 +533,7 @@ function renderNFA() {
 // ============================================================
 // RENDER DFA — horizontal lane layout, no overlapping labels
 // ============================================================
-function renderDFA() {
+function renderDFA(activeTypes) {
   const svg = document.getElementById('dfa-svg');
 
   // Layout: each token type gets its own horizontal "lane"
@@ -544,29 +601,73 @@ function renderDFA() {
   const maxLane = Math.max(...statesDef.map(s=>s[1]));
   const totalH = LANE_TOP + maxLane * LANE_H + 80;
 
+  // Map token names to which accept states they correspond
+  const tokenToAcceptState = {
+    'COMMENT_SINGLE': 'q2', 'COMMENT_MULTI': 'q3', 'STRING': 'q5',
+    'NUMBER': 'q7', 'KEYWORD': 'q9', 'IDENTIFIER': 'q9',
+    'OPERATOR': 'q11', 'FUNCTION': 'q12',
+  };
+  // Map accept state → intermediate state (for tracing back the path)
+  const acceptToMid = {'q2':'q1','q3':'q1','q5':'q4','q7':'q6','q9':'q8','q11':'q10','q12':null};
+
+  // Compute which states are "active" given the token types found
+  let activeStateIds = new Set(['q0']); // start always active
+  if (activeTypes) {
+    Object.entries(tokenToAcceptState).forEach(([tok, qf]) => {
+      if (activeTypes.has(tok)) {
+        activeStateIds.add(qf);
+        const mid = acceptToMid[qf];
+        if (mid) activeStateIds.add(mid);
+      }
+    });
+    // If any UNKNOWN found, activate dead
+    if (activeTypes.has('UNKNOWN')) activeStateIds.add('qdead');
+  } else {
+    // No filter — all active
+    activeStateIds = null;
+  }
+
+  const isStateActive = (id) => !activeStateIds || activeStateIds.has(id);
+  const isEdgeActive  = (fromId, toId) => isStateActive(fromId) && isStateActive(toId);
+
   let defs = `<defs>
     <marker id="dfa-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
       <path d="M1 1L9 5L1 9" fill="none" stroke="#4b5563" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
     </marker>
+    <marker id="dfa-active" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+      <path d="M1 1L9 5L1 9" fill="none" stroke="#22d3a0" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <filter id="dfaglow"><feGaussianBlur stdDeviation="2.5" result="coloredBlur"/><feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
   </defs>`;
+
+  // Active state hint banner
+  if (activeTypes) {
+    const numActive = activeStateIds ? activeStateIds.size - 1 : 'semua'; // -1 for q0 always
+    defs += `<rect x="0" y="0" width="720" height="22" fill="rgba(79,140,255,0.07)" rx="0"/>
+    <text x="360" y="13" text-anchor="middle" dominant-baseline="central" style="font-family:var(--mono);font-size:9px;fill:var(--accent);opacity:.8">State aktif ditandai berdasarkan token yang ditemukan dalam source code</text>`;
+  }
 
   let edgesHTML = '';
   let labelsHTML = '';
 
   transDef.forEach(([fromId, toId, label, pathType, lox, loy]) => {
     const f = stMap[fromId], t = stMap[toId];
-    const edgeColor = t.color === '#ff5f5f' ? '#ff5f5f' : '#3d4556';
+    const active = isEdgeActive(fromId, toId);
+    const edgeColor = active
+      ? (t.color === '#ff5f5f' ? '#ff5f5f' : t.color === '#22d3a0' ? '#22d3a0' : t.color)
+      : '#2d3142';
+    const edgeOpacity = active ? '0.85' : '0.18';
+    const markerUrl = active ? 'url(#dfa-active)' : 'url(#dfa-a)';
+    const strokeW = active ? '1.8' : '0.8';
 
     let d = '';
     let lx, ly;
 
     if (pathType === 'straight') {
-      // Pure horizontal
       d = `M${f.x+R} ${f.y} L${t.x-R} ${t.y}`;
       lx = (f.x + t.x) / 2 + lox;
       ly = f.y + loy;
     } else if (pathType === 'diag') {
-      // Diagonal from col0 to col1
       d = `M${f.x+R} ${f.y} L${t.x-R} ${t.y}`;
       lx = (f.x + t.x) / 2 + lox;
       ly = (f.y + t.y) / 2 + loy;
@@ -575,7 +676,6 @@ function renderDFA() {
       lx = (f.x + t.x) / 2 + lox;
       ly = (f.y + t.y) / 2 + loy;
     } else if (pathType === 'to-right') {
-      // q0 → dead: curved path going right and hitting dead state
       const midX = (f.x + t.x) / 2;
       const midY = f.y - 30;
       d = `M${f.x} ${f.y-R} Q${midX} ${midY} ${t.x-R} ${t.y}`;
@@ -587,11 +687,11 @@ function renderDFA() {
       ly = (f.y + t.y) / 2 + loy;
     }
 
-    edgesHTML += `<path d="${d}" stroke="${edgeColor}" stroke-width="1.3" fill="none" marker-end="url(#dfa-a)" opacity="0.75"/>`;
-    // Label background pill for readability
+    edgesHTML += `<path d="${d}" stroke="${edgeColor}" stroke-width="${strokeW}" fill="none" marker-end="${markerUrl}" opacity="${edgeOpacity}" style="transition:opacity .4s,stroke .4s"/>`;
     const tw = label.length * 5.5 + 8;
-    labelsHTML += `<rect x="${lx - tw/2}" y="${ly-9}" width="${tw}" height="13" rx="3" fill="#111318" opacity="0.85"/>`;
-    labelsHTML += `<text x="${lx}" y="${ly}" text-anchor="middle" dominant-baseline="central" style="font-family:var(--mono);font-size:8.5px;fill:#f5a623">${label}</text>`;
+    const labelOpacity = active ? '0.92' : '0.2';
+    labelsHTML += `<rect x="${lx - tw/2}" y="${ly-9}" width="${tw}" height="13" rx="3" fill="#111318" opacity="${labelOpacity}"/>`;
+    labelsHTML += `<text x="${lx}" y="${ly}" text-anchor="middle" dominant-baseline="central" style="font-family:var(--mono);font-size:8.5px;fill:${active?'#f5a623':'#4b5563'};opacity:${labelOpacity}">${label}</text>`;
   });
 
   // Draw states
@@ -600,25 +700,40 @@ function renderDFA() {
     const isAccept = st.type === 'accept';
     const isStart  = st.type === 'start';
     const isDead   = st.type === 'dead';
-    const bg = isStart ? '#0c1f16' : isDead ? '#1f0c0c' : isAccept ? '#131520' : '#181b22';
+    const stActive = isStateActive(st.id);
+    const stOpacity = stActive ? '1' : '0.18';
 
-    statesHTML += `<circle cx="${st.x}" cy="${st.y}" r="${R}" stroke="${st.color}" stroke-width="${isAccept?2:1.5}" fill="${bg}"/>`;
+    // Count badge for accept states
+    const tokenForState = Object.entries(tokenToAcceptState).find(([,v])=>v===st.id);
+    const countVal = (activeTypes && tokenForState && activeTypes.counts)
+      ? (activeTypes.counts[tokenForState[0]] || 0) : 0;
+
+    const bg = stActive
+      ? (isStart ? '#0c1f16' : isDead ? '#1f0c0c' : isAccept ? '#131520' : '#181b22')
+      : '#111318';
+    const glowFilter = (stActive && isAccept) ? 'filter="url(#dfaglow)"' : '';
+
+    statesHTML += `<circle cx="${st.x}" cy="${st.y}" r="${R}" stroke="${st.color}" stroke-width="${isAccept?2:1.5}" fill="${bg}" opacity="${stOpacity}" ${glowFilter} style="transition:opacity .4s"/>`;
     if (isAccept) {
-      statesHTML += `<circle cx="${st.x}" cy="${st.y}" r="${R-6}" stroke="${st.color}" stroke-width="1" fill="none" opacity="0.45"/>`;
+      statesHTML += `<circle cx="${st.x}" cy="${st.y}" r="${R-6}" stroke="${st.color}" stroke-width="1" fill="none" opacity="${stActive?'0.45':'0.1'}"/>`;
     }
-    statesHTML += `<text x="${st.x}" y="${st.y}" text-anchor="middle" dominant-baseline="central" style="font-family:var(--mono);font-size:10px;fill:${st.color};font-weight:600">${st.label}</text>`;
+    statesHTML += `<text x="${st.x}" y="${st.y}" text-anchor="middle" dominant-baseline="central" style="font-family:var(--mono);font-size:10px;fill:${st.color};font-weight:600;opacity:${stOpacity}">${st.label}</text>`;
 
-    // Note label — always placed above the state circle, never overlapping edges below
     const noteY = st.y - R - 6;
     const noteX = st.x;
     const tw2 = st.note.length * 5.8 + 10;
-    statesHTML += `<rect x="${noteX - tw2/2}" y="${noteY - 12}" width="${tw2}" height="13" rx="3" fill="#111318" opacity="0.9"/>`;
-    statesHTML += `<text x="${noteX}" y="${noteY - 5}" text-anchor="middle" dominant-baseline="central" style="font-family:var(--mono);font-size:8px;fill:${st.color};opacity:.9">${st.note}</text>`;
+    statesHTML += `<rect x="${noteX - tw2/2}" y="${noteY - 12}" width="${tw2}" height="13" rx="3" fill="#111318" opacity="${stActive?'0.9':'0.4'}"/>`;
+    statesHTML += `<text x="${noteX}" y="${noteY - 5}" text-anchor="middle" dominant-baseline="central" style="font-family:var(--mono);font-size:8px;fill:${st.color};opacity:${stActive?'.9':'.2'}">${st.note}</text>`;
 
-    // Entry arrow for start state
     if (isStart) {
-      statesHTML += `<line x1="${st.x-48}" y1="${st.y}" x2="${st.x-R-2}" y2="${st.y}" stroke="${st.color}" stroke-width="1.5" marker-end="url(#dfa-a)"/>`;
+      statesHTML += `<line x1="${st.x-48}" y1="${st.y}" x2="${st.x-R-2}" y2="${st.y}" stroke="${st.color}" stroke-width="1.5" marker-end="url(#dfa-active)"/>`;
       statesHTML += `<text x="${st.x-52}" y="${st.y}" text-anchor="end" dominant-baseline="central" style="font-family:var(--mono);font-size:8px;fill:${st.color}">→</text>`;
+    }
+
+    // Count badge for active accept states
+    if (stActive && isAccept && countVal > 0) {
+      statesHTML += `<rect x="${st.x - 14}" y="${st.y + R + 2}" width="28" height="13" rx="5" fill="rgba(34,211,160,0.18)"/>
+      <text x="${st.x}" y="${st.y + R + 9}" text-anchor="middle" dominant-baseline="central" style="font-family:var(--mono);font-size:8px;fill:#22d3a0">${countVal}×</text>`;
     }
   });
 
@@ -677,6 +792,14 @@ function renderTransitionTable(tokens) {
   const counts = {};
   if (tokens) tokens.forEach(t=>{counts[t.type]=(counts[t.type]||0)+1});
 
+  // Determine which accept states are active
+  const activeDescs = tokens ? new Set(tokens.map(t => {
+    // KEYWORD and IDENTIFIER both reach q2* in our simplified DFA
+    if (t.type === 'KEYWORD') return 'IDENTIFIER';
+    if (t.type === 'FUNCTION') return 'PUNCT';
+    return t.type;
+  })) : null;
+
   let html = `<table class="trans-table">
     <thead><tr>
       <th>State</th>
@@ -687,11 +810,19 @@ function renderTransitionTable(tokens) {
     <tbody>`;
 
   dfaStates.forEach(row => {
+    const isRowActive = !activeDescs || row.isStart || !row.isAccept || (row.desc && activeDescs.has(row.desc)) || (!row.isAccept && !row.isStart && row.state !== 'dead');
+    const dimStyle = (!activeDescs || isRowActive) ? '' : 'opacity:0.3;';
+    const highlightStyle = (activeDescs && isRowActive && row.isAccept) ? 'background:rgba(34,211,160,0.05);' : '';
     const rowClass = row.isStart?'start-row':row.isAccept?'accept-row':'';
     const acceptStr = row.isAccept ? `<span style="color:var(--green)">✓</span>` : `<span style="color:var(--muted2)">—</span>`;
-    const descStr = row.desc ? `<span style="font-family:var(--mono);font-size:11px;color:var(--accent)">${row.desc}${counts[row.desc]?` (${counts[row.desc]})`:''}</span>` : `<span style="color:var(--muted2)">—</span>`;
+    const tokenCount = row.desc && counts[row.desc] ? counts[row.desc] : (row.desc === 'IDENTIFIER' && counts['KEYWORD'] ? (counts['IDENTIFIER']||0) + counts['KEYWORD'] : counts[row.desc]||0);
+    const countBadge = (tokens && tokenCount > 0)
+      ? `<span style="margin-left:6px;background:rgba(34,211,160,0.12);border:1px solid rgba(34,211,160,0.25);color:var(--green);font-size:10px;font-family:var(--mono);padding:1px 6px;border-radius:10px">${tokenCount}×</span>` : '';
+    const descStr = row.desc
+      ? `<span style="font-family:var(--mono);font-size:11px;color:var(--accent)">${row.desc}</span>${countBadge}`
+      : `<span style="color:var(--muted2)">—</span>`;
 
-    html += `<tr class="${rowClass}">
+    html += `<tr class="${rowClass}" style="${dimStyle}${highlightStyle}transition:opacity .3s">
       <td>${row.state}</td>
       <td>${acceptStr}</td>
       <td>${descStr}</td>
@@ -736,10 +867,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Render static panels immediately
-  renderRegex();
-  renderNFA();
-  renderDFA();
+  // Render default (unfiltered) panels on init
+  renderRegex(null);
+  renderNFA(null);
+  renderDFA(null);
   renderTransitionTable(null);
 
   // Analyze
@@ -747,8 +878,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const src = ta.value.trim();
     if (!src) { alert('Source code kosong!\nKetik atau pilih contoh dari dropdown.'); return; }
     const tokens = tokenize(src);
+
+    // Build activeTypes set with counts attached
+    const counts = {};
+    tokens.forEach(t => { counts[t.type] = (counts[t.type]||0)+1; });
+    const activeTypes = new Set(Object.keys(counts));
+    activeTypes.counts = counts;
+
     renderTokens(tokens);
     renderSummary(tokens);
+    renderRegex(activeTypes);
+    renderNFA(activeTypes);
+    renderDFA(activeTypes);
     renderTransitionTable(tokens);
 
     // Switch to token tab
